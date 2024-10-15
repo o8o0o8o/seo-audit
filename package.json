@@ -1,0 +1,14 @@
+{
+  "name": "seo-audit",
+  "version": "1.0.0",
+  "description": "tool tool for seo analysis on your site",
+  "main": "index.js",
+  "scripts": {
+    "seo": "node seo"
+  },
+  "author": "Sergey Labut",
+  "license": "ISC",
+  "dependencies": {
+    "node-html-parser": "^6.1.13"
+  }
+}
