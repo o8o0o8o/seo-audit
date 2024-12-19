@@ -10,7 +10,7 @@ async function crawlPages({
   addMissing,
   origin,
 }) {
-  const BATCH_SIZE = 2; // it's better to keep it below 25
+  const BATCH_SIZE = 5; // it's better to keep it below 25
   const alternatesErrors = [];
   const uniqueTitles = new Set();
   const uniqueDescriptions = new Set();
@@ -254,28 +254,30 @@ async function crawlPages({
             }
           }
 
-          for (const pageAlternate of pageData.alternates) {
-            const sitemapAlternate =
-              matchingCanonical.alternates[pageAlternate.href];
+          if (Array.isArray(pageData.alternates)) {
+            for (const pageAlternate of pageData.alternates) {
+              const sitemapAlternate =
+                matchingCanonical.alternates[pageAlternate.href];
 
-            if (sitemapAlternate) {
-              if (sitemapAlternate.hreflang !== pageAlternate.hreflang) {
+              if (sitemapAlternate) {
+                if (sitemapAlternate.hreflang !== pageAlternate.hreflang) {
+                  overallErrors.add(
+                    `Some alternate hreflangs from sitemap don't match alternate hreflangs from pages`
+                  );
+
+                  SEOData.analysis.details.push(
+                    `Alternate hreflangs ${alternate.hreflang} doesn't match sitemap hreflang ${sitemapAlternate.hreflang} for loc ${pageData.canonical} for this page ${url}`
+                  );
+                }
+              } else {
                 overallErrors.add(
-                  `Some alternate hreflangs from sitemap don't match alternate hreflangs from pages`
+                  `Some alternate hrefs from sitemap don't match alternates from pages`
                 );
 
                 SEOData.analysis.details.push(
-                  `Alternate hreflangs ${alternate.hreflang} doesn't match sitemap hreflang ${sitemapAlternate.hreflang} for loc ${pageData.canonical} for this page ${url}`
+                  `Alternate href ${alternate.href} has no match in sitemap for canonical ${pageData.canonical} for this page ${url}`
                 );
               }
-            } else {
-              overallErrors.add(
-                `Some alternate hrefs from sitemap don't match alternates from pages`
-              );
-
-              SEOData.analysis.details.push(
-                `Alternate href ${alternate.href} has no match in sitemap for canonical ${pageData.canonical} for this page ${url}`
-              );
             }
           }
         } else {
@@ -405,86 +407,36 @@ async function seoAudit() {
       const parsedSitemap = parse(sitemap);
       const unique = new Set();
       const processedUrls = {};
+      const urls = parsedSitemap.querySelectorAll("url");
 
-      for (const site of parsedSitemap.querySelectorAll("url")) {
-        const processedData = {
-          loc: site.querySelector("loc")?.innerText,
-          lastmod: site.querySelector("lastmod")?.innerText,
-          changefreq: site.querySelector("changefreq")?.innerText,
-          priority: site.querySelector("priority")?.innerText,
-          alternates: {},
-        };
+      if (urls.length) {
+        getURLsFromSitemap({
+          urls,
+          unique,
+          processedUrls,
+          overallErrors,
+          SEOData,
+          currentSitemap: sitemapUrl,
+          origin,
+        });
+      } else {
+        for (const sitemap of parsedSitemap.querySelectorAll("sitemap")) {
+          const sitemapPage = sitemap.querySelector("loc")?.innerText;
+          const sitemapPageResponse = await fetch(sitemapPage);
+          const sitemapPageText = await sitemapPageResponse.text();
+          const parsedSitemapPage = parse(sitemapPageText);
 
-        unique.add(processedData.loc);
-
-        for (const alternate of site.querySelectorAll("xhtml:link")) {
-          if (alternate.attributes.rel === "alternate") {
-            processedData.alternates[alternate.attributes.href] = {
-              hreflang: alternate.attributes.hreflang,
-              href: alternate.attributes.href,
-            };
-          }
-        }
-
-        processedUrls[processedData.loc] = processedData;
-      }
-
-      const locs = Object.keys(processedUrls);
-
-      if (locs.length >= 50000) {
-        overallErrors.add("Sitemap is reached the limit 50000 " + sitemapUrl);
-      }
-
-      if (unique.size !== locs.length) {
-        overallErrors.add("There are duplications in sitemap " + sitemapUrl);
-
-        for (const site of locs) {
-          const count = locs.reduce((acc, curr) => {
-            if (curr === site) {
-              return acc + 1;
-            }
-            return acc;
-          }, 0);
-
-          if (count > 1) {
-            SEOData.analysis.details.push(
-              `Duplicate url: ${key} in sitemap: ${sitemapUrl}`
-            );
-          }
+          getURLsFromSitemap({
+            urls: parsedSitemapPage.querySelectorAll("url"),
+            unique,
+            processedUrls,
+            overallErrors,
+            SEOData,
+            currentSitemap: sitemapPage,
+            origin,
+          });
         }
       }
-
-      const withTrailingSlash = [];
-      const withoutTrailingLSlash = [];
-
-      for (const site of unique) {
-        if (!site.startsWith(origin)) {
-          overallErrors.add(
-            `Incorrect origin ${site} in sitemap ${sitemapUrl}`
-          );
-        }
-
-        if (site.endsWith("/")) {
-          withTrailingSlash.push(site);
-        } else {
-          withoutTrailingLSlash.push(site);
-        }
-      }
-
-      if (withTrailingSlash.length && withoutTrailingLSlash.length) {
-        overallErrors.add(
-          `Trailing slash inconsistencies in sitemap ${sitemapUrl}: withTrailingSlash = ${withTrailingSlash.length}, withoutTrailingLSlash = ${withoutTrailingLSlash.length}`
-        );
-      }
-
-      SEOData.sitemaps[sitemapUrl] = {
-        total: locs.length,
-        totalUnique: unique.size,
-        urls: processedUrls,
-      };
-
-      SEOData.sitemaps.urls = { ...SEOData.sitemaps.urls, ...processedUrls };
-      SEOData.sitemaps.total += locs.length;
     } catch (error) {
       const message = `Error during processing sitemap ${sitemapUrl} ${error.name} ${error.message} ${error.cause}`;
 
@@ -555,3 +507,92 @@ async function seoAudit() {
 }
 
 seoAudit();
+
+function getURLsFromSitemap({
+  urls,
+  unique,
+  processedUrls,
+  overallErrors,
+  SEOData,
+  currentSitemap,
+  origin,
+}) {
+  for (const site of urls) {
+    const processedData = {
+      loc: site.querySelector("loc")?.innerText,
+      lastmod: site.querySelector("lastmod")?.innerText,
+      changefreq: site.querySelector("changefreq")?.innerText,
+      priority: site.querySelector("priority")?.innerText,
+      alternates: {},
+    };
+
+    unique.add(processedData.loc);
+
+    for (const alternate of site.querySelectorAll("xhtml:link")) {
+      if (alternate.attributes.rel === "alternate") {
+        processedData.alternates[alternate.attributes.href] = {
+          hreflang: alternate.attributes.hreflang,
+          href: alternate.attributes.href,
+        };
+      }
+    }
+
+    processedUrls[processedData.loc] = processedData;
+  }
+  const locs = Object.keys(processedUrls);
+
+  if (locs.length >= 50000) {
+    overallErrors.add("Sitemap is reached the limit 50000 " + currentSitemap);
+  }
+
+  if (unique.size !== locs.length) {
+    overallErrors.add("There are duplications in sitemap " + currentSitemap);
+
+    for (const site of locs) {
+      const count = locs.reduce((acc, curr) => {
+        if (curr === site) {
+          return acc + 1;
+        }
+        return acc;
+      }, 0);
+
+      if (count > 1) {
+        SEOData.analysis.details.push(
+          `Duplicate url: ${key} in sitemap: ${currentSitemap}`
+        );
+      }
+    }
+  }
+
+  const withTrailingSlash = [];
+  const withoutTrailingLSlash = [];
+
+  for (const site of unique) {
+    if (!site.startsWith(origin)) {
+      overallErrors.add(
+        `Incorrect origin ${site} in sitemap ${currentSitemap}`
+      );
+    }
+
+    if (site.endsWith("/")) {
+      withTrailingSlash.push(site);
+    } else {
+      withoutTrailingLSlash.push(site);
+    }
+  }
+
+  if (withTrailingSlash.length && withoutTrailingLSlash.length) {
+    overallErrors.add(
+      `Trailing slash inconsistencies in sitemap ${currentSitemap}: withTrailingSlash = ${withTrailingSlash.length}, withoutTrailingLSlash = ${withoutTrailingLSlash.length}`
+    );
+  }
+
+  SEOData.sitemaps[currentSitemap] = {
+    total: locs.length,
+    totalUnique: unique.size,
+    urls: processedUrls,
+  };
+
+  SEOData.sitemaps.urls = { ...SEOData.sitemaps.urls, ...processedUrls };
+  SEOData.sitemaps.total += locs.length;
+}
