@@ -20,19 +20,19 @@ async function crawlPages({
   const META_TAGS = [
     "description",
     "keywords",
+    "robots",
     "og:type",
     "og:url",
     "og:title",
     "og:description",
     "og:site_name",
+    "og:image",
     "twitter:site",
     "twitter:creator",
     "twitter:title",
     "twitter:description",
     "twitter:card",
     "twitter:widgets:new-embed-design",
-    "robots",
-    "og:image",
     "twitter:image:src",
   ];
 
@@ -147,18 +147,20 @@ async function crawlPages({
           const name = metaTag.attributes.name;
 
           for (const tag of META_TAGS) {
-            if (name === tag) {
-              pageData.meta.push({ [tag]: metaTag.attributes.content });
+            const content = metaTag.attributes.content;
 
-              if (name === "description" && uniqueDescriptions.has(title)) {
+            if (name === tag) {
+              pageData.meta.push({ [tag]: content });
+
+              if (name === "description" && uniqueDescriptions.has(content)) {
                 overallErrors.add(`Some pages have identical descriptions`);
 
                 SEOData.analysis.details.push(
-                  `Description "${metaTag.attributes.content}" is duplicated for this page ${url}`
+                  `Description "${content}" is duplicated for this page ${url}`
                 );
               }
 
-              uniqueDescriptions.add(title);
+              uniqueDescriptions.add(content);
             }
           }
         }
